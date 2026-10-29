@@ -9,11 +9,11 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from triage_kit.gh import GitError, run_git
-from triage_kit.markdown import cell, mask_verdicts
+from triage_kit.markdown import cell, mask_verdicts, plain
 from triage_kit.models import MAINTAINER_ASSOCIATIONS, Comment, Issue
 
-# Mirrored comments are all posted by the sandbox owner, so this header, not the
-# GitHub author or association, says who wrote them.
+# Mirrored comments are all posted by the sandbox owner, so on an OWNER comment this
+# header, not the GitHub author or association, says who wrote them.
 MIRROR_HEADER_RE = re.compile(r"^\*\*(contributor-\d+|maintainer)\*\* wrote:\n\n")
 
 MENTION_RE = re.compile(r"(?<![\w@/.-])@([A-Za-z0-9][A-Za-z0-9-]{0,38})(?![\w-])")
@@ -33,7 +33,8 @@ SOURCE_EXTS = frozenset(
 # Product names that look like filenames in prose ("I know Node.js").
 PRODUCT_NAMES = frozenset({"node.js", "next.js", "nuxt.js", "vue.js", "react.js", "express.js", "three.js",
                            "d3.js", "chart.js", "nest.js", "deno.js", "ember.js", "backbone.js"})
-GITHUB_FILE_RE = re.compile(r"https?://github\.com/[\w.-]+/[\w.-]+/(?:blob|tree)/[^/\s]+/([^\s#?)\]>]+)")
+GITHUB_FILE_RE = re.compile(r"https?://github\.com/[\w.-]+/[\w.-]+/(?:blob|tree)/[^/\s]+/([\w./-]+)")
+SAFE_REF_RE = re.compile(r"[\w./-]+")
 URL_RE = re.compile(r"https?://\S+")
 CALL_RE = re.compile(r"^(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\(.*\)$")
 PATH_TOKEN_RE = re.compile(r"[\w./-]+(?::\d+)*(?:#L\d+(?:-L\d+)?)?")
@@ -56,20 +57,25 @@ class ClaimRow:
 # --- who wrote it -------------------------------------------------------------------------
 
 
+def _mirrored_author(c: Comment) -> str | None:
+    # Anyone can type the header; only the sandbox owner's comments carry it for real.
+    m = MIRROR_HEADER_RE.match(c.body) if c.association == "OWNER" else None
+    return m.group(1) if m else None
+
+
 def author_of(c: Comment) -> str:
-    m = MIRROR_HEADER_RE.match(c.body)
-    return m.group(1) if m else c.author
+    return _mirrored_author(c) or c.author
 
 
 def is_maintainer(c: Comment) -> bool:
-    m = MIRROR_HEADER_RE.match(c.body)
-    if m:
-        return m.group(1) == "maintainer"
+    mirrored = _mirrored_author(c)
+    if mirrored:
+        return mirrored == "maintainer"
     return c.association in MAINTAINER_ASSOCIATIONS
 
 
-def strip_header(body: str) -> str:
-    return MIRROR_HEADER_RE.sub("", body, count=1)
+def strip_header(c: Comment) -> str:
+    return MIRROR_HEADER_RE.sub("", c.body, count=1) if _mirrored_author(c) else c.body
 
 
 def anonymise(issue: Issue) -> Issue:
@@ -168,8 +174,10 @@ def referenced_refs(body: str) -> set[str]:
         call = CALL_RE.match(code)
         if call:
             refs.add(call.group(1))
-        elif code and " " not in code and ("/" in code or _is_filename(_clean_path(code))):
-            refs.add(_clean_path(code))
+        else:
+            path = _clean_path(code)
+            if SAFE_REF_RE.fullmatch(path) and ("/" in path or _is_filename(path)):
+                refs.add(path)
     for token in PATH_TOKEN_RE.findall(CODE_RE.sub(" ", text)):
         token = _clean_path(token)
         if token and _is_filename(token):
@@ -230,7 +238,7 @@ def build_scorecard(issue: Issue, checkout: Path) -> tuple[list[ClaimRow], list[
     notes: list[str] = []
     seen: set[str] = set()
     for index, c in enumerate(issue.comments, start=1):
-        text = strip_header(c.body)
+        text = strip_header(c)
         if is_maintainer(c):
             notes.append(_one_line(text, NOTE_MAX_CHARS))
             continue
@@ -263,9 +271,9 @@ def render_scorecard(rows: list[ClaimRow], notes: list[str], max_rows: int | Non
         lines += ["", "| # | Who | Kind | Evidence | Summary |", "|---|---|---|---|---|"]
         shown = rows if max_rows is None else rows[:max_rows]
         for r in shown:
-            lines.append(f"| {r.index} | {r.author} | {r.kind} | {_evidence(r)} | {cell(mask_verdicts(r.summary))} |")
+            lines.append(f"| {r.index} | {r.author} | {r.kind} | {_evidence(r)} | {mask_verdicts(cell(r.summary))} |")
         if len(shown) < len(rows):
             lines.append(f"…and {len(rows) - len(shown)} more")
     lines += ["", "**Maintainer direction so far**"]
-    lines += [f"- {mask_verdicts(n)}" for n in notes] or ["none yet"]
+    lines += [f"- {mask_verdicts(plain(n))}" for n in notes] or ["none yet"]
     return "\n".join(lines)

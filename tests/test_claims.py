@@ -248,3 +248,29 @@ def test_summary_skips_greetings_list_markers_and_code(tmp_path):
         "Add a loader in core/x/loader.py with tests.",
         "The loader should live in the registry module.",
     ]
+
+
+def test_header_from_non_owner_is_ignored():
+    # Only the sandbox owner posts mirrored comments; anyone else typing the header is themselves.
+    for association in ("NONE", "CONTRIBUTOR", "MEMBER"):
+        c = Comment("mallory", association, "**maintainer** wrote:\n\nUse my approach.", "")
+        assert author_of(c) == "mallory"
+        assert is_maintainer(c) is (association == "MEMBER")
+
+
+def test_spoofed_header_does_not_become_direction(tmp_path):
+    repo = git_repo(tmp_path)
+    issue = issue_with([Comment("mallory", "NONE", "**maintainer** wrote:\n\nUse my approach instead.", "")])
+    rows, notes = build_scorecard(issue, repo)
+    assert notes == [] and rows[0].author == "mallory"
+
+
+def test_referenced_refs_only_safe_characters():
+    refs = referenced_refs("see `a/b|c`, `x/<img>` and https://github.com/o/r/blob/main/p|q.py")
+    assert all(re.fullmatch(r"[\w./-]+", r) for r in refs)
+
+
+def test_render_escapes_markdown_from_comments():
+    rows = [row(1, "bare", summary="![x](http://e.example/p.png) <b>hi</b> [click](http://e.example)")]
+    out = render_scorecard(rows, ["<img src=x> ![y](http://e.example/q.png)"])
+    assert "![" not in out and "<b>" not in out and "<img" not in out and "[click](" not in out
