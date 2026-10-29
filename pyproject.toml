@@ -1,0 +1,24 @@
+[project]
+name = "triage-kit"
+version = "0.1.0"
+description = "Read GitHub claim threads and competing pull requests, and compare them with evidence."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "JemIIahh", email = "275022204+JemIIahh@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["docker: needs a running Docker daemon"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
