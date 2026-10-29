@@ -1,10 +1,13 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from triage_kit.bench import (
+    OUTPUT_CAP,
+    _contained,
     PrResult,
     diff_stats,
     docker_install_argv,
@@ -39,6 +42,8 @@ def assert_sealed(argv: list[str], scratch: Path) -> None:
     assert argv[argv.index("--memory") + 1] == "1g"
     assert argv[argv.index("--pids-limit") + 1] == "256"
     assert argv[argv.index("--name") + 1] == "issue-desk-abc"
+    assert argv[argv.index("--cap-drop") + 1] == "ALL"
+    assert argv[argv.index("--security-opt") + 1] == "no-new-privileges"
 
 
 def test_test_argv_is_sealed(tmp_path):
@@ -173,3 +178,19 @@ def test_run_tests_timeout_cleans_up(tmp_path):
     left = subprocess.run(["docker", "ps", "-a", "--filter", "name=issue-desk-", "--format", "{{.Names}}"],
                           capture_output=True, text=True).stdout.strip()
     assert left == ""
+
+
+
+def test_output_is_capped_while_reading():
+    # _contained runs any argv; plain Python stands in for docker here.
+    code, out = _contained([sys.executable, "-c", "print('x' * 5_000_000); print('END')"], "unused", 30)
+    assert code == 0
+    assert out.splitlines()[-1] == "END"
+    assert len(out) <= OUTPUT_CAP
+
+
+def test_output_cap_holds_on_timeout():
+    code, out = _contained([sys.executable, "-c", "import time; print('y' * 3_000_000, flush=True); time.sleep(30)"],
+                           "issue-desk-none", 3)
+    assert code is None
+    assert 0 < len(out) <= OUTPUT_CAP

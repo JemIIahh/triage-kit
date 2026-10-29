@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -23,6 +24,8 @@ from triage_kit.sweep import closes_issues
 TestStatus = Literal["pass", "fail", "timeout", "error"]
 
 TAIL_LINES = 20
+# Bytes of output kept per container while reading, however much a PR prints.
+OUTPUT_CAP = 64 * 1024
 SCOPE_SHOWN = 3
 # Exit codes from `docker run` itself, meaning the tests never ran.
 DOCKER_ERRORS = (125, 126, 127)
@@ -99,7 +102,7 @@ def risk_flags(files: list[str], diff_text: str) -> tuple[str, ...]:
 def _docker_argv(scratch: Path, image: str, cmd: str, name: str, network: list[str]) -> list[str]:
     return [
         "docker", "run", "--rm", *network,
-        "--memory", "1g", "--pids-limit", "256", "--security-opt", "no-new-privileges",
+        "--memory", "1g", "--pids-limit", "256", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--name", name, "-v", f"{scratch}:/work", "-w", "/work",
         image, "sh", "-c", cmd,
     ]
@@ -119,15 +122,30 @@ def _tail(text: str) -> str:
 
 
 def _contained(argv: list[str], name: str, timeout: int) -> tuple[int | None, str]:
-    """Run one container; on timeout remove it and return None as the exit code."""
+    """Run one container, keeping only the last OUTPUT_CAP bytes of its output.
+
+    On timeout, remove the container and return None as the exit code.
+    """
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    kept = bytearray()
+
+    def read() -> None:
+        while chunk := proc.stdout.read1(65536):
+            kept.extend(chunk)
+            del kept[:-OUTPUT_CAP]
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     try:
-        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        # Killing the docker CLI leaves the container running.
+        code: int | None = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Killing the docker CLI alone would leave the container running.
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        out = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        return None, out
-    return proc.returncode, proc.stdout
+        proc.kill()
+        proc.wait()
+        code = None
+    reader.join(timeout=5)
+    return code, kept.decode(errors="replace")
 
 
 def run_tests(
