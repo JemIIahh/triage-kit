@@ -25,4 +25,4 @@ install `npm ci --ignore-scripts --no-audit --no-fund` and tests
 (stellarmind's own `tests/run-history-recovery.test.js` already fails at `BASE`, and its
 full `npm test` needs the network.)
 
-The patches are derived from stellarmind, which is MIT licensed (Copyright (c) Flamki).
+The patches are derived from stellarmind, MIT licensed, Copyright (c) 2026 StellarMind Team.
