@@ -62,7 +62,7 @@ def test_anonymise_replaces_mentions():
             Comment("bobby", "CONTRIBUTOR", "> @alice can I take this?\n\nI'd like it too, @Carol knows the code. "
                     "Use `@pytest.fixture` here.", ""),
             Comment("petrov", "MEMBER", "@bobby go ahead", ""),
-            Comment("alice", "NONE", "ok", ""),
+            Comment("alice", "NONE", "ok, see `@bobby` and https://github.com/Bobby/fork", ""),
         ],
         body="Ping @alice or @carol.",
     )
@@ -75,6 +75,7 @@ def test_anonymise_replaces_mentions():
     assert "> @contributor-1 can I take this?" in out.comments[1].body
     assert "`@pytest.fixture`" in out.comments[1].body
     assert out.comments[2].body == "@contributor-2 go ahead"
+    assert out.comments[3].body == "ok, see `@contributor-2` and https://github.com/contributor-2/fork"
 
 
 # --- classify -----------------------------------------------------------------------------
@@ -274,3 +275,9 @@ def test_render_escapes_markdown_from_comments():
     rows = [row(1, "bare", summary="![x](http://e.example/p.png) <b>hi</b> [click](http://e.example)")]
     out = render_scorecard(rows, ["<img src=x> ![y](http://e.example/q.png)"])
     assert "![" not in out and "<b>" not in out and "<img" not in out and "[click](" not in out
+
+
+def test_masking_cannot_build_a_link():
+    rows = [row(1, "bare", summary="!spam(http://e.example/p.png) and lazy(http://e.example)")]
+    out = render_scorecard(rows, ["spam(http://e.example/n)"])
+    assert "](" not in out.replace("\\](", "")

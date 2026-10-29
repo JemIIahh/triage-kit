@@ -1,4 +1,5 @@
 import json
+import re
 
 from triage_kit.claims import MIRROR_HEADER_RE, author_of, is_maintainer
 from triage_kit.mirror import mirror_body, mirror_comment, mirror_issue
@@ -16,6 +17,9 @@ SOURCE_COMMENTS = [
     {"user": {"login": "alice"}, "author_association": "NONE", "body": "can I take this @petrov?", "created_at": "t1"},
     {"user": {"login": "bobby"}, "author_association": "NONE", "body": "> @alice can I\n\nme too", "created_at": "t2"},
     {"user": {"login": "petrov"}, "author_association": "MEMBER", "body": "@bobby go ahead", "created_at": "t3"},
+    {"user": {"login": "bobby"}, "author_association": "NONE",
+     "body": "Done in https://github.com/bobby/repo/pull/9, see #5 and other/repo#7. Thanks `@alice` @petrov",
+     "created_at": "t4"},
 ]
 LOGINS = ("petrov", "alice", "bobby")
 
@@ -64,3 +68,22 @@ def test_mirror_posts_no_real_logins():
     for p in gh.posts[1:]:
         body = next(a for a in p if a.startswith("body="))[len("body="):]
         assert MIRROR_HEADER_RE.match(body)
+
+
+def posted_bodies(gh: RecordingGh) -> list[str]:
+    return [next(a for a in p if a.startswith("body="))[len("body="):] for p in gh.posts]
+
+
+def test_mirror_makes_mentions_and_references_inert():
+    gh = RecordingGh()
+    mirror_issue("src/repo", 12, "me/sandbox", run=gh)
+    bodies = posted_bodies(gh)
+    for body in bodies:
+        prose = re.sub(r"`[^`]*`", "", body)
+        assert not re.search(r"@\w", prose), body
+        assert not re.search(r"#\d", prose), body
+        assert "https://github.com/" not in prose, body
+    last = bodies[-1]
+    assert "`https://github.com/contributor-2/repo/pull/9`" in last
+    assert "`#5`" in last and "`other/repo#7`" in last
+    assert "＠maintainer" in last

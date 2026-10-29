@@ -16,7 +16,9 @@ from triage_kit.models import MAINTAINER_ASSOCIATIONS, Comment, Issue
 # header, not the GitHub author or association, says who wrote them.
 MIRROR_HEADER_RE = re.compile(r"^\*\*(contributor-\d+|maintainer)\*\* wrote:\n\n")
 
-MENTION_RE = re.compile(r"(?<![\w@/.-])@([A-Za-z0-9][A-Za-z0-9-]{0,38})(?![\w-])")
+# `＠` is the inert form mirrored copies use, so a mirrored mention still reads as one.
+MENTION_RE = re.compile(r"(?<![\w@＠/.-])[@＠]([A-Za-z0-9][A-Za-z0-9-]{0,38})(?![\w-])")
+PROFILE_RE = re.compile(r"(github\.com/)([A-Za-z0-9][A-Za-z0-9-]{0,38})(?![\w-])", re.IGNORECASE)
 CODE_RE = re.compile(r"(```.*?```|`[^`\n]*`)", re.DOTALL)
 FENCE_RE = re.compile(r"```.*?(?:```|$)", re.DOTALL)
 GREETING_RE = re.compile(r"^(?:hi|hello|hey|gm|good (?:morning|afternoon|evening))\b[^\w@]*(?:@[\w-]+[^\w@]*)*",
@@ -94,12 +96,16 @@ def anonymise(issue: Issue) -> Issue:
     author = name_for(issue.author, issue.association)
     authors = [name_for(c.author, c.association) for c in issue.comments]
 
+    def pseudonym(m: re.Match, unknown: str | None) -> str:
+        return "@" + names.get(m.group(1).lower(), unknown or m.group(1))
+
     def scrub(text: str) -> str:
-        # Mentions inside code (`@pytest.fixture`) are code, not people.
+        # Participants are replaced everywhere; other mentions only outside code,
+        # where `@pytest.fixture` is code, not a person.
         parts = CODE_RE.split(text)
-        for i in range(0, len(parts), 2):
-            parts[i] = MENTION_RE.sub(lambda m: "@" + names.get(m.group(1).lower(), "someone"), parts[i])
-        return "".join(parts)
+        for i, part in enumerate(parts):
+            parts[i] = MENTION_RE.sub(lambda m: pseudonym(m, None if i % 2 else "someone"), part)
+        return PROFILE_RE.sub(lambda m: m.group(1) + names.get(m.group(2).lower(), m.group(2)), "".join(parts))
 
     return replace(
         issue,
@@ -271,9 +277,9 @@ def render_scorecard(rows: list[ClaimRow], notes: list[str], max_rows: int | Non
         lines += ["", "| # | Who | Kind | Evidence | Summary |", "|---|---|---|---|---|"]
         shown = rows if max_rows is None else rows[:max_rows]
         for r in shown:
-            lines.append(f"| {r.index} | {r.author} | {r.kind} | {_evidence(r)} | {mask_verdicts(cell(r.summary))} |")
+            lines.append(f"| {r.index} | {r.author} | {r.kind} | {_evidence(r)} | {cell(mask_verdicts(r.summary))} |")
         if len(shown) < len(rows):
             lines.append(f"…and {len(rows) - len(shown)} more")
     lines += ["", "**Maintainer direction so far**"]
-    lines += [f"- {mask_verdicts(plain(n))}" for n in notes] or ["none yet"]
+    lines += [f"- {plain(mask_verdicts(n))}" for n in notes] or ["none yet"]
     return "\n".join(lines)
