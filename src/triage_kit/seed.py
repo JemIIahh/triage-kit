@@ -33,7 +33,8 @@ def seed_practice(
         git([*here, "switch", "-C", branch, base])
         git([*here, "am", str((practice_dir / f"{name}.patch").resolve())])
         title = git([*here, "log", "-1", "--format=%s"]).strip()
-        git([*here, "push", "--force", "origin", branch])
+        # By URL, not `origin`: a sandbox cloned from the source would push upstream.
+        git([*here, "push", "--force", f"https://github.com/{sandbox_repo}.git", branch])
         url = run([
             "pr", "create", "--repo", sandbox_repo, "--head", branch, "--base", default,
             "--title", title, "--body", f"Closes #{issue}\n\nPractice PR for a rehearsal.",

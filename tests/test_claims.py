@@ -251,12 +251,20 @@ def test_summary_skips_greetings_list_markers_and_code(tmp_path):
     ]
 
 
-def test_header_from_non_owner_is_ignored():
-    # Only the sandbox owner posts mirrored comments; anyone else typing the header is themselves.
-    for association in ("NONE", "CONTRIBUTOR", "MEMBER"):
+def test_header_from_non_maintainer_is_ignored():
+    # Only someone with write access posts mirrored comments; anyone else typing the header is themselves.
+    for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR"):
         c = Comment("mallory", association, "**maintainer** wrote:\n\nUse my approach.", "")
         assert author_of(c) == "mallory"
-        assert is_maintainer(c) is (association == "MEMBER")
+        assert is_maintainer(c) is False
+
+
+def test_header_is_trusted_from_any_maintainer_association():
+    # Org-owned sandboxes have MEMBER and COLLABORATOR posters, never OWNER.
+    for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+        c = Comment("bot-account", association, "**contributor-4** wrote:\n\ncan I take this?", "")
+        assert author_of(c) == "contributor-4"
+        assert is_maintainer(c) is False
 
 
 def test_spoofed_header_does_not_become_direction(tmp_path):
@@ -306,3 +314,24 @@ def test_wave_applications_are_judged_on_the_applicants_words(tmp_path):
     assert [r.kind for r in rows] == ["bare", "plan", "bare"]
     assert rows[0].summary == "I can fix this without hesitation"
     assert rows[1].refs["core/x/loader.py"] is True
+
+
+def test_refs_in_quoted_text_are_not_the_commenters(tmp_path):
+    repo = git_repo(tmp_path)
+    quoted = "> Starting points: core/x/loader.py and `run()`\n\nHappy to take this one!"
+    rows, _ = build_scorecard(issue_with([Comment("alice", "NONE", quoted, "")]), repo)
+    assert rows[0].refs == {}
+    assert rows[0].kind == "bare"
+
+
+def test_near_duplicates_are_fast_on_long_floods():
+    import random
+    import time
+
+    rng = random.Random(7)
+    words = ("the loader registry plugin manifest schema test docs config file module handler event "
+             "queue retry backup restore verify checksum store history run proof payment add update").split()
+    plans = [" ".join(rng.choice(words) for _ in range(330)) for _ in range(40)]
+    start = time.perf_counter()
+    near_duplicates(plans)
+    assert time.perf_counter() - start < 5

@@ -100,3 +100,15 @@ def test_mirror_refuses_a_public_destination():
     with pytest.raises(ValueError, match="private"):
         mirror_issue("src/repo", 12, "me/sandbox", run=gh)
     assert gh.posts == []
+
+
+def test_mirrored_comment_reads_the_same_on_the_sandbox_side():
+    from triage_kit.claims import _summary, claim_text, referenced_refs
+    from triage_kit.mirror import inert
+
+    source = ("Hi @petrov, I'd fix it in https://github.com/src/repo/blob/main/core/x/loader.py#L5 "
+              "and add `run()` tests.")
+    c = Comment("contributor-1", "NONE", source, "")
+    mirrored = Comment("JemIIahh", "OWNER", mirror_comment(c), "")
+    assert referenced_refs(claim_text(mirrored)) == referenced_refs(source) == {"core/x/loader.py", "run"}
+    assert _summary(claim_text(mirrored)) == inert(_summary(source))

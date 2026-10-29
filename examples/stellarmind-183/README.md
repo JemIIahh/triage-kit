@@ -8,7 +8,7 @@ written for rehearsing a PR comparison. None was ever sent to the real project.
 |---|---|---|
 | `good.patch` | Backup, verify and restore with a checksum, a CLI, tests and docs | tests pass, nothing out of scope |
 | `failing.patch` | The same idea, but verify skips the checksum | `history-backup.test.js` fails on the damaged-backup case |
-| `sprawling.patch` | The good change plus README, `package.json`, `.prettierrc` and CI edits | tests pass, 4 files out of scope |
+| `sprawling.patch` | The good change plus README, `package.json`, `.prettierrc` and CI edits | tests pass, 4 files out of scope, `dependencies changed` |
 
 `BASE` is the stellarmind commit they apply to (`git am`). In a private copy of
 stellarmind:

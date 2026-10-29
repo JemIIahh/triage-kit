@@ -29,9 +29,15 @@ OUTPUT_CAP = 64 * 1024
 SCOPE_SHOWN = 3
 # Exit codes from `docker run` itself, meaning the tests never ran.
 DOCKER_ERRORS = (125, 126, 127)
+# SIGKILL: the memory limit's OOM killer. Reported like a timeout, as a limit the PR hit.
+KILLED = 137
 
 TEST_FILE_RE = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|_test\.\w+$|\.(test|spec)\.\w+$")
 SECRET_RE = re.compile(r"AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY")
+MANIFEST_RE = re.compile(
+    r"(^|/)(package\.json|requirements[^/]*\.txt|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|Cargo\.toml|go\.mod"
+    r"|Gemfile|composer\.json)$"
+)
 LOCKFILES = frozenset({
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "Pipfile.lock",
     "Cargo.lock", "Gemfile.lock", "go.sum", "composer.lock",
@@ -96,25 +102,34 @@ def risk_flags(files: list[str], diff_text: str) -> tuple[str, ...]:
         for f in files
     ):
         flags.append("generated files")
+    # Dependencies are installed with network access, so the maintainer should know.
+    if any(MANIFEST_RE.search(f) for f in files):
+        flags.append("dependencies changed")
     return tuple(flags)
 
 
-def _docker_argv(scratch: Path, image: str, cmd: str, name: str, network: list[str]) -> list[str]:
+def _docker_argv(scratch: Path, image: str, cmd: str, name: str, extra: list[str]) -> list[str]:
+    # --memory-swap equal to --memory: 1g means 1g, not 1g plus the VM's swap.
     return [
-        "docker", "run", "--rm", *network,
-        "--memory", "1g", "--pids-limit", "256", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "docker", "run", *extra,
+        "--memory", "1g", "--memory-swap", "1g", "--pids-limit", "256",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--name", name, "-v", f"{scratch}:/work", "-w", "/work",
         image, "sh", "-c", cmd,
     ]
 
 
 def docker_install_argv(scratch: Path, image: str, cmd: str, name: str) -> list[str]:
-    """Installing dependencies may download them, so this phase keeps the network."""
+    """Installing dependencies may download them, so this phase keeps the network.
+
+    No --rm: `run_tests` commits the stopped container as the test phase's image,
+    so packages installed outside /work are still there, then removes it.
+    """
     return _docker_argv(scratch, image, cmd, name, [])
 
 
 def docker_test_argv(scratch: Path, image: str, cmd: str, name: str) -> list[str]:
-    return _docker_argv(scratch, image, cmd, name, ["--network", "none"])
+    return _docker_argv(scratch, image, cmd, name, ["--rm", "--network", "none"])
 
 
 def _tail(text: str) -> str:
@@ -153,21 +168,35 @@ def run_tests(
 ) -> tuple[TestStatus, str]:
     """Run `test_cmd` against a scratch copy of `worktree`; return the status and the output's last lines."""
     scratch = Path(tempfile.mkdtemp(prefix="issue-desk-"))
+    name = f"issue-desk-{uuid.uuid4().hex[:12]}"
+    installed: str | None = None
     try:
         work = scratch / "work"
         shutil.copytree(worktree, work, ignore=shutil.ignore_patterns(".git"), symlinks=True)
-        name = f"issue-desk-{uuid.uuid4().hex[:12]}"
         if install_cmd:
-            code, out = _contained(docker_install_argv(work, image, install_cmd, name), name, timeout)
+            try:
+                code, out = _contained(docker_install_argv(work, image, install_cmd, name), name, timeout)
+                if code == 0:
+                    installed = f"{name}:installed"
+                    commit = subprocess.run(["docker", "commit", name, installed], capture_output=True, text=True)
+                    if commit.returncode != 0:
+                        installed = None
+                        return "error", _tail(out + commit.stderr)
+            finally:
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            if code is None or code == KILLED:
+                return "timeout", _tail(out)
             if code != 0:
-                return ("timeout" if code is None else "error"), _tail(out)
-        code, out = _contained(docker_test_argv(work, image, test_cmd, name), name, timeout)
-        if code is None:
+                return "error", _tail(out)
+        code, out = _contained(docker_test_argv(work, installed or image, test_cmd, name), name, timeout)
+        if code is None or code == KILLED:
             return "timeout", _tail(out)
         if code in DOCKER_ERRORS:
             return "error", _tail(out)
         return ("pass" if code == 0 else "fail"), _tail(out)
     finally:
+        if installed:
+            subprocess.run(["docker", "rmi", "-f", installed], capture_output=True)
         shutil.rmtree(scratch, ignore_errors=True)
 
 

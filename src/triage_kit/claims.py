@@ -12,8 +12,8 @@ from triage_kit.gh import GitError, run_git
 from triage_kit.markdown import cell, mask_verdicts, plain
 from triage_kit.models import MAINTAINER_ASSOCIATIONS, Comment, Issue
 
-# Mirrored comments are all posted by the sandbox owner, so on an OWNER comment this
-# header, not the GitHub author or association, says who wrote them.
+# Mirrored comments are all posted by someone with write access to the sandbox, so on
+# their comments this header, not the GitHub author or association, says who wrote them.
 MIRROR_HEADER_RE = re.compile(r"^\*\*(contributor-\d+|maintainer)\*\* wrote:\n\n")
 
 # `＠` is the inert form mirrored copies use, so a mirrored mention still reads as one.
@@ -21,7 +21,7 @@ MENTION_RE = re.compile(r"(?<![\w@＠/.-])[@＠]([A-Za-z0-9][A-Za-z0-9-]{0,38})(
 PROFILE_RE = re.compile(r"(github\.com/)([A-Za-z0-9][A-Za-z0-9-]{0,38})(?![\w-])", re.IGNORECASE)
 CODE_RE = re.compile(r"(```.*?```|`[^`\n]*`)", re.DOTALL)
 FENCE_RE = re.compile(r"```.*?(?:```|$)", re.DOTALL)
-GREETING_RE = re.compile(r"^(?:hi|hello|hey|gm|good (?:morning|afternoon|evening))\b[^\w@]*(?:@[\w-]+[^\w@]*)*",
+GREETING_RE = re.compile(r"^(?:hi|hello|hey|gm|good (?:morning|afternoon|evening))\b[^\w@＠]*(?:[@＠][\w-]+[^\w@＠]*)*",
                          re.IGNORECASE)
 
 # Drips Wave posts each application under the applicant's account, wrapping their own
@@ -39,7 +39,10 @@ SOURCE_EXTS = frozenset(
 # Product names that look like filenames in prose ("I know Node.js").
 PRODUCT_NAMES = frozenset({"node.js", "next.js", "nuxt.js", "vue.js", "react.js", "express.js", "three.js",
                            "d3.js", "chart.js", "nest.js", "deno.js", "ember.js", "backbone.js"})
-GITHUB_FILE_RE = re.compile(r"https?://github\.com/[\w.-]+/[\w.-]+/(?:blob|tree)/[^/\s]+/([\w./-]+)")
+# `．` is the inert dot mirrored copies use.
+GITHUB_FILE_RE = re.compile(
+    r"https?://(?:www\.)?github[.．]com/[\w.-]+/[\w.-]+/(?:blob|tree)/[^/\s]+/([\w./-]+)", re.IGNORECASE
+)
 SAFE_REF_RE = re.compile(r"[\w./-]+")
 URL_RE = re.compile(r"https?://\S+")
 CALL_RE = re.compile(r"^(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\(.*\)$")
@@ -64,8 +67,8 @@ class ClaimRow:
 
 
 def _mirrored_author(c: Comment) -> str | None:
-    # Anyone can type the header; only the sandbox owner's comments carry it for real.
-    m = MIRROR_HEADER_RE.match(c.body) if c.association == "OWNER" else None
+    # Anyone can type the header; only comments by people with write access carry it for real.
+    m = MIRROR_HEADER_RE.match(c.body) if c.association in MAINTAINER_ASSOCIATIONS else None
     return m.group(1) if m else None
 
 
@@ -145,18 +148,21 @@ def classify(body: str, repeat_author: bool) -> Kind:
     return "plan"
 
 
-def _normalise(text: str) -> str:
-    return " ".join(MENTION_RE.sub("", _unquoted(text)).lower().split())
+def _normalise(text: str) -> list[str]:
+    return MENTION_RE.sub("", _unquoted(text)).lower().split()
 
 
 def near_duplicates(bodies: list[str], threshold: float = 0.80) -> dict[int, tuple[int, float]]:
-    """Map each later body to its closest earlier body at or above `threshold`."""
+    """Map each later body to its closest earlier body at or above `threshold`.
+
+    Compares word lists: character-level matching is far too slow on floods of long plans.
+    """
     norm = [_normalise(b) for b in bodies]
     found: dict[int, tuple[int, float]] = {}
     for j in range(1, len(norm)):
         best: tuple[int, float] | None = None
         for i in range(j):
-            # autojunk would treat common letters as noise in texts over 200 chars.
+            # autojunk would treat common words as noise in texts over 200 words.
             sm = SequenceMatcher(None, norm[i], norm[j], autojunk=False)
             if sm.real_quick_ratio() < threshold or sm.quick_ratio() < threshold:
                 continue
@@ -264,7 +270,9 @@ def build_scorecard(issue: Issue, checkout: Path) -> tuple[list[ClaimRow], list[
         who = author_of(c)
         kind = classify(text, who in seen)
         seen.add(who)
-        rows.append(ClaimRow(index, who, kind, None, None, check_refs(referenced_refs(text), checkout), _summary(text)))
+        # Files named only in quoted text are the quoted person's, not this commenter's.
+        refs = check_refs(referenced_refs(_unquoted(text)), checkout)
+        rows.append(ClaimRow(index, who, kind, None, None, refs, _summary(text)))
         texts.append(text)
 
     plans = [i for i, r in enumerate(rows) if r.kind == "plan"]

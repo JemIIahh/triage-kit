@@ -7,8 +7,12 @@ standard library only.
 - **Sweep:** find the issues with the most claims and open PRs.
 - **Claims:** sort claim comments into bare asks, plans and follow-ups, spot
   near-duplicates, and check the files and functions they mention against the real code.
-- **Bench:** run each competing PR's tests in a sealed Docker container (no network,
-  no credentials) and compare them side by side.
+- **Bench:** run each competing PR's tests in a sealed Docker container and compare them
+  side by side. Containers get a scratch copy of the code and nothing else: no credentials,
+  no environment, no capabilities, 1 GB of memory. Tests run with no network. Installing
+  dependencies does get the network (and can reach your machine's local services), so prefer
+  install commands that skip package scripts (`npm ci --ignore-scripts`), and read PRs that
+  get the `dependencies changed` flag before you compare them.
 - **Mirror:** copy an issue into a sandbox repo with usernames replaced, for rehearsals.
 
 It never closes, merges or comments on anything by itself. Only `mirror` and

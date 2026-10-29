@@ -32,14 +32,15 @@ docker = pytest.mark.skipif(not docker_up(), reason="Docker is not running")
 # --- sealed containers --------------------------------------------------------------------
 
 
-def assert_sealed(argv: list[str], scratch: Path) -> None:
+def assert_sealed(argv: list[str], scratch: Path, removed_by_docker: bool = True) -> None:
     assert "-e" not in argv and "--env" not in argv and "--env-file" not in argv
     assert argv.count("-v") == 1
     assert argv[argv.index("-v") + 1] == f"{scratch}:/work"
     for word in (".config/gh", ".ssh", "HOME", ".docker", "docker.sock"):
         assert not any(word in a for a in argv), word
-    assert "--rm" in argv
+    assert ("--rm" in argv) is removed_by_docker
     assert argv[argv.index("--memory") + 1] == "1g"
+    assert argv[argv.index("--memory-swap") + 1] == "1g"
     assert argv[argv.index("--pids-limit") + 1] == "256"
     assert argv[argv.index("--name") + 1] == "issue-desk-abc"
     assert argv[argv.index("--cap-drop") + 1] == "ALL"
@@ -55,7 +56,8 @@ def test_test_argv_is_sealed(tmp_path):
 
 def test_install_argv_has_no_credentials(tmp_path):
     argv = docker_install_argv(tmp_path, "node:20-slim", "npm ci", "issue-desk-abc")
-    assert_sealed(argv, tmp_path)
+    # Kept after it exits, so what it installed can become the test phase's image.
+    assert_sealed(argv, tmp_path, removed_by_docker=False)
     assert argv[-3:] == ["sh", "-c", "npm ci"]
 
 
@@ -76,6 +78,11 @@ def test_risk_flags():
     assert "possible secret" not in risk_flags(["tests/test_a.py"], "-token = 'ghp_" + "a" * 36 + "'")
     assert risk_flags(["poetry.lock", "tests/t.py"], "") == ("generated files",)
     assert "generated files" in risk_flags(["dist/app.js", "web/x.min.js", "tests/t.py"], "")
+    # Dependencies install with network access, so a PR that changes them says so.
+    for manifest in ("package.json", "requirements.txt", "requirements-dev.txt", "pyproject.toml", "setup.py",
+                     "web/package.json", "Cargo.toml", "go.mod"):
+        assert "dependencies changed" in risk_flags([manifest, "tests/t.py"], ""), manifest
+    assert "dependencies changed" not in risk_flags(["src/a.py", "tests/t.py"], "")
 
 
 # --- PRs and worktrees --------------------------------------------------------------------
@@ -194,3 +201,27 @@ def test_output_cap_holds_on_timeout():
                            "issue-desk-none", 3)
     assert code is None
     assert 0 < len(out) <= OUTPUT_CAP
+
+
+def leftovers() -> str:
+    containers = subprocess.run(["docker", "ps", "-a", "--filter", "name=issue-desk-", "--format", "{{.Names}}"],
+                                capture_output=True, text=True).stdout.strip()
+    images = subprocess.run(["docker", "images", "--filter", "reference=issue-desk-*", "--format", "{{.Repository}}"],
+                            capture_output=True, text=True).stdout.strip()
+    return containers + images
+
+
+@docker
+def test_install_state_carries_into_tests(tmp_path):
+    # pip and global tools install outside /work; the test phase must still see them.
+    status, tail = run_tests(tmp_path, "python:3.12-slim", "touch /usr/local/installed", "test -f /usr/local/installed")
+    assert status == "pass", tail
+    assert leftovers() == ""
+
+
+@docker
+def test_memory_hog_reports_timeout(tmp_path):
+    hog = 'python -c "b = []\nwhile True: b.append(bytearray(50_000_000))"'
+    status, _ = run_tests(tmp_path, "python:3.12-slim", None, hog, timeout=120)
+    assert status == "timeout"
+    assert leftovers() == ""

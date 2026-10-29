@@ -53,7 +53,9 @@ def test_seed_opens_three_closing_prs(tmp_path):
     for name in PRACTICE:
         assert ["-C", str(sandbox), "switch", "-C", f"practice/{name}", "8a3de16"] in git.calls
         assert any(c[2] == "am" and c[-1].endswith(f"{name}.patch") for c in git.calls)
-        assert ["-C", str(sandbox), "push", "--force", "origin", f"practice/{name}"] in git.calls
+        # Pushed to the checked repo by URL, never to whatever `origin` happens to be.
+        assert ["-C", str(sandbox), "push", "--force", "https://github.com/me/sandbox.git",
+                f"practice/{name}"] in git.calls
     assert git.calls[-1] == ["-C", str(sandbox), "switch", "master"]
 
 
