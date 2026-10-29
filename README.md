@@ -13,6 +13,8 @@ standard library only.
   dependencies does get the network (and can reach your machine's local services), so prefer
   install commands that skip package scripts (`npm ci --ignore-scripts`), and read PRs that
   get the `dependencies changed` flag before you compare them.
+  Passing tests don't show code that phones home, so PRs that add network calls or read
+  credentials are flagged, and so is any connection attempt the tests made in the box.
 - **Mirror:** copy an issue into a sandbox repo with usernames replaced, for rehearsals.
 
 It never closes, merges or comments on anything by itself. Only `mirror` and

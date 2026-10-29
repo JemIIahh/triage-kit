@@ -2,7 +2,8 @@
 
 A PR's code is a stranger's code. It runs in Docker with a scratch copy of the
 checkout as its only mount, no environment variables and no credentials; the
-test phase has no network at all.
+test phase has no network at all. Code that would phone home or read credentials
+is flagged too, since tests that pass don't show it.
 """
 
 import re
@@ -37,6 +38,24 @@ SECRET_RE = re.compile(r"AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|-----BEGIN [
 MANIFEST_RE = re.compile(
     r"(^|/)(package\.json|requirements[^/]*\.txt|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|Cargo\.toml|go\.mod"
     r"|Gemfile|composer\.json)$"
+)
+# Calls that reach the network, in code a PR adds. Docs that show a curl command don't count.
+NETWORK_RE = re.compile(
+    r"\bfetch\s*\(|\bhttps?\.(?:request|get)\s*\(|\baxios\b|\bnet\.(?:connect|createConnection)\s*\(|\bdgram\b"
+    r"|\bWebSocket\s*\(|\brequests\.(?:get|post|put|patch|delete|request)\s*\(|\burllib\.request\b|\bhttpx\b"
+    r"|\bsocket\.(?:socket|create_connection)\s*\(|\b(?:curl|wget)\s"
+)
+# Reading a credential by name, dumping the whole environment, or opening a credentials file.
+CREDENTIAL_RE = re.compile(
+    r"(?:process\.env|os\.environ)(?:\.get\(\s*['\"]|\.|\[\s*['\"])\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL)"
+    r"|(?:Object\.(?:keys|entries|values)|JSON\.stringify)\(\s*process\.env\s*\)|dict\(\s*os\.environ\s*\)"
+    r"|\.ssh/|\.npmrc|\.aws/credentials|\.git-credentials|\.netrc|/proc/self/environ"
+)
+DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt", ".adoc"})
+# What a failed connection prints inside the test phase, where there is no network.
+BLOCKED_NETWORK_RE = re.compile(
+    r"EAI_AGAIN|ENETUNREACH|ENOTFOUND|Temporary failure in name resolution|Network is unreachable"
+    r"|Could not resolve host"
 )
 LOCKFILES = frozenset({
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "Pipfile.lock",
@@ -90,6 +109,21 @@ def out_of_scope(files: list[str], scope_globs: list[str]) -> tuple[str, ...]:
     return tuple(f for f in files if not any(fnmatchcase(f, g) for g in scope_globs))
 
 
+def _added_code(diff_text: str) -> list[str]:
+    """Lines a diff adds to files that aren't docs."""
+    lines, path, in_header = [], "", False
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            in_header = True
+        elif in_header and line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else ""
+        elif line.startswith("@@"):
+            in_header = False
+        elif not in_header and line.startswith("+") and path and PurePosixPath(path).suffix not in DOC_SUFFIXES:
+            lines.append(line[1:])
+    return lines
+
+
 def risk_flags(files: list[str], diff_text: str) -> tuple[str, ...]:
     flags = []
     if not any(TEST_FILE_RE.search(f) for f in files):
@@ -105,7 +139,17 @@ def risk_flags(files: list[str], diff_text: str) -> tuple[str, ...]:
     # Dependencies are installed with network access, so the maintainer should know.
     if any(MANIFEST_RE.search(f) for f in files):
         flags.append("dependencies changed")
+    code = "\n".join(_added_code(diff_text))
+    if NETWORK_RE.search(code):
+        flags.append("network call added")
+    if CREDENTIAL_RE.search(code):
+        flags.append("reads credentials")
     return tuple(flags)
+
+
+def runtime_flags(output: str) -> tuple[str, ...]:
+    """Flags from what a PR's tests printed in the test phase."""
+    return ("blocked network attempt",) if BLOCKED_NETWORK_RE.search(output) else ()
 
 
 def _docker_argv(scratch: Path, image: str, cmd: str, name: str, extra: list[str]) -> list[str]:
@@ -165,8 +209,12 @@ def _contained(argv: list[str], name: str, timeout: int) -> tuple[int | None, st
 
 def run_tests(
     worktree: Path, image: str, install_cmd: str | None, test_cmd: str, timeout: int = 300
-) -> tuple[TestStatus, str]:
-    """Run `test_cmd` against a scratch copy of `worktree`; return the status and the output's last lines."""
+) -> tuple[TestStatus, str, tuple[str, ...]]:
+    """Run `test_cmd` against a scratch copy of `worktree`.
+
+    Returns the status, the output's last lines, and `runtime_flags` from all of the
+    test phase's output (an attempt can print anywhere, not just at the end).
+    """
     scratch = Path(tempfile.mkdtemp(prefix="issue-desk-"))
     name = f"issue-desk-{uuid.uuid4().hex[:12]}"
     installed: str | None = None
@@ -181,19 +229,21 @@ def run_tests(
                     commit = subprocess.run(["docker", "commit", name, installed], capture_output=True, text=True)
                     if commit.returncode != 0:
                         installed = None
-                        return "error", _tail(out + commit.stderr)
+                        return "error", _tail(out + commit.stderr), ()
             finally:
                 subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            # The install phase has the network, so its output says nothing about attempts.
             if code is None or code == KILLED:
-                return "timeout", _tail(out)
+                return "timeout", _tail(out), ()
             if code != 0:
-                return "error", _tail(out)
+                return "error", _tail(out), ()
         code, out = _contained(docker_test_argv(work, installed or image, test_cmd, name), name, timeout)
+        flags = runtime_flags(out)
         if code is None or code == KILLED:
-            return "timeout", _tail(out)
+            return "timeout", _tail(out), flags
         if code in DOCKER_ERRORS:
-            return "error", _tail(out)
-        return ("pass" if code == 0 else "fail"), _tail(out)
+            return "error", _tail(out), flags
+        return ("pass" if code == 0 else "fail"), _tail(out), flags
     finally:
         if installed:
             subprocess.run(["docker", "rmi", "-f", installed], capture_output=True)

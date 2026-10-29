@@ -9,17 +9,17 @@ from pathlib import Path
 
 from triage_kit.gh import Runner, run_gh, run_git
 
-PRACTICE = ("good", "failing", "sprawling")
+PRACTICE = ("good", "failing", "sprawling", "sneaky")
 
 
 def seed_practice(
     sandbox_dir: Path, sandbox_repo: str, issue: int, practice_dir: Path,
-    run: Runner = run_gh, git: Runner = run_git,
+    run: Runner = run_gh, git: Runner = run_git, names: tuple[str, ...] = PRACTICE,
 ) -> list[int]:
     """For each `<name>.patch` in `practice_dir`, branch from `BASE`, apply it, push, open a PR closing `issue`.
 
     The patches are `git format-patch` output, so each carries its own commit message;
-    its subject becomes the PR title. Returns the new PR numbers in PRACTICE order.
+    its subject becomes the PR title. Returns the new PR numbers in `names` order.
     """
     info = json.loads(run(["api", f"repos/{sandbox_repo}"]))
     if not info.get("private"):
@@ -28,7 +28,7 @@ def seed_practice(
     base = (practice_dir / "BASE").read_text().strip()
     here = ["-C", str(sandbox_dir)]
     numbers = []
-    for name in PRACTICE:
+    for name in names:
         branch = f"practice/{name}"
         git([*here, "switch", "-C", branch, base])
         git([*here, "am", str((practice_dir / f"{name}.patch").resolve())])

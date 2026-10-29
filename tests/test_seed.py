@@ -37,13 +37,13 @@ class FakeGh:
         raise AssertionError(args)
 
 
-def test_seed_opens_three_closing_prs(tmp_path):
+def test_seed_opens_closing_prs(tmp_path):
     sandbox = tmp_path / "sandbox"
     gh, git = FakeGh(), FakeGit()
     numbers = seed_practice(sandbox, "me/sandbox", 7, practice_dir(tmp_path), run=gh, git=git)
-    assert numbers == [41, 42, 43]
+    assert numbers == [41, 42, 43, 44]
     heads = [a[a.index("--head") + 1] for a in gh.creates]
-    assert heads == ["practice/good", "practice/failing", "practice/sprawling"]
+    assert heads == ["practice/good", "practice/failing", "practice/sprawling", "practice/sneaky"]
     for a in gh.creates:
         assert a[a.index("--repo") + 1] == "me/sandbox"
         assert a[a.index("--base") + 1] == "master"
@@ -70,3 +70,13 @@ def test_seed_refuses_a_public_sandbox(tmp_path):
 
     with pytest.raises(ValueError, match="private"):
         seed_practice(tmp_path, "me/sandbox", 7, practice_dir(tmp_path), run=PublicGh(), git=FakeGit())
+
+
+def test_seed_opens_only_the_named_patches(tmp_path):
+    # Adding one practice PR to a sandbox that already has the others.
+    gh, git = FakeGh(), FakeGit()
+    numbers = seed_practice(tmp_path, "me/sandbox", 7, practice_dir(tmp_path), run=gh, git=git, names=("sneaky",))
+    assert numbers == [41]
+    assert [a[a.index("--head") + 1] for a in gh.creates] == ["practice/sneaky"]
+    assert sum(c[2] == "am" for c in git.calls) == 1
+    assert git.calls[-1] == ["-C", str(tmp_path), "switch", "master"]

