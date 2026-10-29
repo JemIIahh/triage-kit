@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from triage_kit.markdown import cell
 from triage_kit.models import IssueSummary, PullRequest
 
 # A closing keyword, an optional colon, whitespace, then #N for this repo only:
@@ -38,11 +39,6 @@ def hot_issues(
         if i.comment_count >= min_comments or len(closing.get(i.number, [])) >= min_prs
     ]
     return sorted(hot, key=lambda h: (-len(h.pr_numbers), -h.comment_count, h.number))
-
-
-def cell(text: str) -> str:
-    """Make text safe for one markdown table cell."""
-    return " ".join(text.split()).replace("|", "\\|")
 
 
 def render_sweep(hot: list[HotIssue], repo: str) -> str:
