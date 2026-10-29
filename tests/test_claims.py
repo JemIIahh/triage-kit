@@ -281,3 +281,28 @@ def test_masking_cannot_build_a_link():
     rows = [row(1, "bare", summary="!spam(http://e.example/p.png) and lazy(http://e.example)")]
     out = render_scorecard(rows, ["spam(http://e.example/n)"])
     assert "](" not in out.replace("\\](", "")
+
+
+def wave(login: str, text: str) -> str:
+    """A Drips Wave application comment, as the Wave app posts it under the applicant's account."""
+    quoted = "\n".join(f"> {line}" for line in text.splitlines())
+    return (
+        f"@{login} has applied to work on this issue as part of the **Stellar Wave Program**'s 10th wave.\n\n"
+        "<!-- wave:application-id:808dd0a2-db4f-4aa4-81f3-323c71640ab9 -->\n<!-- wave:app-text-start -->\n"
+        f"{quoted}\n<!-- wave:app-text-end -->\n\n"
+        "ℹ️ **Repo Maintainers**: To accept this application, [review their application]"
+        f"(https://www.drips.network/wave/maintainers/issues/x) or assign @{login} to this issue."
+    )
+
+
+def test_wave_applications_are_judged_on_the_applicants_words(tmp_path):
+    repo = git_repo(tmp_path)
+    issue = issue_with([
+        Comment("alice", "NONE", wave("alice", "I can fix this without hesitation"), ""),
+        Comment("bobby", "NONE", wave("bobby", PLAN), ""),
+        Comment("carol", "NONE", wave("carol", "Hello maintainer, please assign me, I will deliver on time."), ""),
+    ])
+    rows, _ = build_scorecard(issue, repo)
+    assert [r.kind for r in rows] == ["bare", "plan", "bare"]
+    assert rows[0].summary == "I can fix this without hesitation"
+    assert rows[1].refs["core/x/loader.py"] is True

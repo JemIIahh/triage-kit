@@ -37,7 +37,13 @@ def mirror_body(issue: Issue, src_repo: str) -> str:
 
 
 def mirror_issue(src_repo: str, number: int, dst_repo: str, run: Runner = run_gh) -> int:
-    """Post an anonymised copy of the issue and its comments; return the new issue number."""
+    """Post an anonymised copy of the issue and its comments; return the new issue number.
+
+    Refuses any destination that isn't private: GitHub shows a private repo's
+    mentions and cross-references to nobody outside it, which backs up `inert`.
+    """
+    if not json.loads(run(["api", f"repos/{dst_repo}"])).get("private"):
+        raise ValueError(f"{dst_repo} is not private; mirror only writes to a private sandbox repo")
     issue = anonymise(fetch_issue(src_repo, number, run))
     created = json.loads(run([
         "api", "-X", "POST", f"repos/{dst_repo}/issues",

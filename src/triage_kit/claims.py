@@ -24,6 +24,10 @@ FENCE_RE = re.compile(r"```.*?(?:```|$)", re.DOTALL)
 GREETING_RE = re.compile(r"^(?:hi|hello|hey|gm|good (?:morning|afternoon|evening))\b[^\w@]*(?:@[\w-]+[^\w@]*)*",
                          re.IGNORECASE)
 
+# Drips Wave posts each application under the applicant's account, wrapping their own
+# words in a fixed template; only the words between these markers are theirs.
+WAVE_TEXT_RE = re.compile(r"<!-- wave:app-text-start -->\n(.*?)\n?<!-- wave:app-text-end -->", re.DOTALL)
+
 BARE_MAX_CHARS = 280
 NOTE_MAX_CHARS = 280
 SUMMARY_MAX_CHARS = 100
@@ -78,6 +82,15 @@ def is_maintainer(c: Comment) -> bool:
 
 def strip_header(c: Comment) -> str:
     return MIRROR_HEADER_RE.sub("", c.body, count=1) if _mirrored_author(c) else c.body
+
+
+def claim_text(c: Comment) -> str:
+    """What the commenter actually wrote: no mirror header, no application template."""
+    body = strip_header(c)
+    m = WAVE_TEXT_RE.search(body)
+    if not m:
+        return body
+    return "\n".join(re.sub(r"^> ?", "", line) for line in m.group(1).splitlines())
 
 
 def anonymise(issue: Issue) -> Issue:
@@ -244,7 +257,7 @@ def build_scorecard(issue: Issue, checkout: Path) -> tuple[list[ClaimRow], list[
     notes: list[str] = []
     seen: set[str] = set()
     for index, c in enumerate(issue.comments, start=1):
-        text = strip_header(c)
+        text = claim_text(c)
         if is_maintainer(c):
             notes.append(_one_line(text, NOTE_MAX_CHARS))
             continue

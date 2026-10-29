@@ -1,6 +1,8 @@
 import json
 import re
 
+import pytest
+
 from triage_kit.claims import MIRROR_HEADER_RE, author_of, is_maintainer
 from triage_kit.mirror import mirror_body, mirror_comment, mirror_issue
 from triage_kit.models import Comment, Issue
@@ -26,14 +28,17 @@ LOGINS = ("petrov", "alice", "bobby")
 
 
 class RecordingGh:
-    def __init__(self):
+    def __init__(self, private: bool = True):
         self.posts: list[list[str]] = []
+        self.private = private
 
     def __call__(self, args: list[str]) -> str:
         if "POST" in args:
             self.posts.append(args)
             return json.dumps({"number": 5, "id": len(self.posts)})
         path = args[-1]
+        if path == "repos/me/sandbox":
+            return json.dumps({"full_name": "me/sandbox", "private": self.private})
         if path.startswith("repos/src/repo/issues/12/comments"):
             return json.dumps([SOURCE_COMMENTS])
         if path == "repos/src/repo/issues/12":
@@ -88,3 +93,10 @@ def test_mirror_makes_mentions_and_references_inert():
     assert "WWW.GitHub．com/o/r/issues/3" in last
     assert "＃5" in last and "other/repo＃7" in last
     assert "＠maintainer" in last and "`＠contributor-1`" in last
+
+
+def test_mirror_refuses_a_public_destination():
+    gh = RecordingGh(private=False)
+    with pytest.raises(ValueError, match="private"):
+        mirror_issue("src/repo", 12, "me/sandbox", run=gh)
+    assert gh.posts == []
