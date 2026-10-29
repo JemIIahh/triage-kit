@@ -18,7 +18,8 @@ SOURCE_COMMENTS = [
     {"user": {"login": "bobby"}, "author_association": "NONE", "body": "> @alice can I\n\nme too", "created_at": "t2"},
     {"user": {"login": "petrov"}, "author_association": "MEMBER", "body": "@bobby go ahead", "created_at": "t3"},
     {"user": {"login": "bobby"}, "author_association": "NONE",
-     "body": "Done in https://github.com/bobby/repo/pull/9, see #5 and other/repo#7. Thanks `@alice` @petrov",
+     "body": "Done in https://github.com/bobby/repo/pull/9, see #5 and other/repo#7. Thanks `@alice` @petrov "
+             "and \\`@someone-else\\` via WWW.GitHub.com/o/r/issues/3",
      "created_at": "t4"},
 ]
 LOGINS = ("petrov", "alice", "bobby")
@@ -52,7 +53,7 @@ def test_mirror_body_footer_does_not_link_back():
     issue = Issue(12, "t", "Body text.", "maintainer", "OWNER", (), ())
     body = mirror_body(issue, "src/repo")
     assert body.startswith("Body text.")
-    assert "`src/repo#12`" in body
+    assert "Mirrored from src/repo＃12 for a rehearsal." in body
     assert "Usernames replaced." in body
 
 
@@ -79,11 +80,12 @@ def test_mirror_makes_mentions_and_references_inert():
     mirror_issue("src/repo", 12, "me/sandbox", run=gh)
     bodies = posted_bodies(gh)
     for body in bodies:
+        assert not re.search(r"@\w", body), body
+        assert not re.search(r"#\d", body), body
         prose = re.sub(r"`[^`]*`", "", body)
-        assert not re.search(r"@\w", prose), body
-        assert not re.search(r"#\d", prose), body
-        assert "https://github.com/" not in prose, body
+        assert not re.search(r"github\.com/", prose, re.IGNORECASE), body
     last = bodies[-1]
     assert "`https://github.com/contributor-2/repo/pull/9`" in last
-    assert "`#5`" in last and "`other/repo#7`" in last
-    assert "＠maintainer" in last
+    assert "`WWW.GitHub.com/o/r/issues/3`" in last
+    assert "＃5" in last and "other/repo＃7" in last
+    assert "＠maintainer" in last and "`＠contributor-1`" in last
