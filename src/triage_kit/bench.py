@@ -52,7 +52,9 @@ CREDENTIAL_RE = re.compile(
     r"|\.ssh/|\.npmrc|\.aws/credentials|\.git-credentials|\.netrc|/proc/self/environ"
 )
 DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt", ".adoc"})
-# What a failed connection prints inside the test phase, where there is no network.
+# What a failed connection prints inside the test phase, where there is no network. A hint
+# only: it reads the PR's own output, so code that stays quiet (or floods past OUTPUT_CAP)
+# shows nothing. The sealed container and the flags on the added code are the safeguards.
 BLOCKED_NETWORK_RE = re.compile(
     r"EAI_AGAIN|ENETUNREACH|ENOTFOUND|Temporary failure in name resolution|Network is unreachable"
     r"|Could not resolve host"
@@ -212,8 +214,8 @@ def run_tests(
 ) -> tuple[TestStatus, str, tuple[str, ...]]:
     """Run `test_cmd` against a scratch copy of `worktree`.
 
-    Returns the status, the output's last lines, and `runtime_flags` from all of the
-    test phase's output (an attempt can print anywhere, not just at the end).
+    Returns the status, the output's last lines, and `runtime_flags` from all the test
+    phase's output that was kept (the last OUTPUT_CAP bytes), not just those lines.
     """
     scratch = Path(tempfile.mkdtemp(prefix="issue-desk-"))
     name = f"issue-desk-{uuid.uuid4().hex[:12]}"

@@ -14,7 +14,8 @@ standard library only.
   install commands that skip package scripts (`npm ci --ignore-scripts`), and read PRs that
   get the `dependencies changed` flag before you compare them.
   Passing tests don't show code that phones home, so PRs that add network calls or read
-  credentials are flagged, and so is any connection attempt the tests made in the box.
+  credentials are flagged. A connection attempt the tests print about is flagged too, as a
+  hint: quiet code shows nothing there, and the sealed box is what actually stops it.
 - **Mirror:** copy an issue into a sandbox repo with usernames replaced, for rehearsals.
 
 It never closes, merges or comments on anything by itself. Only `mirror` and
