@@ -16,6 +16,10 @@ standard library only.
   Passing tests don't show code that phones home, so PRs that add network calls or read
   credentials are flagged. A connection attempt the tests print about is flagged too, as a
   hint: quiet code shows nothing there, and the sealed box is what actually stops it.
+- **Replies:** draft a thank-you for everyone who wasn't picked, pointing each to an open
+  issue nobody is assigned to yet. People who wrote a plan choose first, and each issue goes
+  to one person, so the replies don't start a new flood. They go out as a few comments, not
+  one per person, so the thread's subscribers aren't flooded either. You post them.
 - **Mirror:** copy an issue into a sandbox repo with usernames replaced, for rehearsals.
 
 It never closes, merges or comments on anything by itself. Only `mirror` and

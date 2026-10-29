@@ -50,13 +50,14 @@ def test_issue_summaries_skip_pull_requests():
     items = [
         {"number": 1, "title": "a", "comments": 3, "labels": []},
         {"number": 2, "title": "b", "comments": 9, "labels": [], "pull_request": {"url": "x"}},
-        {"number": 3, "title": "c", "comments": 0, "labels": [{"name": "bug"}]},
+        {"number": 3, "title": "c", "comments": 0, "labels": [{"name": "bug"}], "assignees": [{"login": "ana"}]},
     ]
     gh = FakeGh({"repos/o/r/issues": [items[:2], items[2:]]})
     summaries = list_open_issue_summaries("o/r", None, run=gh)
     assert [s.number for s in summaries] == [1, 3]
     assert summaries[1].labels == ("bug",)
     assert summaries[0].comment_count == 3
+    assert (summaries[0].assignees, summaries[1].assignees) == ((), ("ana",))
 
 
 def test_issue_summaries_filter_by_label():

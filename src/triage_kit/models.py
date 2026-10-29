@@ -30,6 +30,7 @@ class IssueSummary:
     title: str
     comment_count: int
     labels: tuple[str, ...]
+    assignees: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

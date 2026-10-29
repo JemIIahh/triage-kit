@@ -68,7 +68,13 @@ def list_open_issue_summaries(repo: str, label: str | None, run: Runner = run_gh
     if label:
         path += f"&labels={quote(label)}"
     return [
-        IssueSummary(i["number"], i["title"], i.get("comments", 0), tuple(lb["name"] for lb in i.get("labels", [])))
+        IssueSummary(
+            i["number"],
+            i["title"],
+            i.get("comments", 0),
+            tuple(lb["name"] for lb in i.get("labels", [])),
+            tuple(a["login"] for a in i.get("assignees") or []),
+        )
         for i in _items(path, run)
         if "pull_request" not in i
     ]
