@@ -7,27 +7,24 @@ only to `dst_repo`.
 import json
 import re
 
-from triage_kit.claims import CODE_RE, MENTION_RE, anonymise
+from triage_kit.claims import MENTION_RE, anonymise
 from triage_kit.gh import Runner, fetch_issue, run_gh
 from triage_kit.models import Comment, Issue
 
-GITHUB_URL_RE = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[^\s)\]>`]*[^\s)\]>`.,;:!?]", re.IGNORECASE)
+GITHUB_HOST_RE = re.compile(r"\b(github)\.(com)\b", re.IGNORECASE)
 ISSUE_REF_RE = re.compile(r"(?<![\w/#&＃])((?:[\w.-]+/[\w.-]+)?)#(\d+)\b")
 
 
 def inert(text: str) -> str:
     """Text that notifies nobody and cross-references nothing when GitHub renders it.
 
-    Mentions and issue refs get full-width `＠` and `＃` everywhere, code included,
-    so nothing depends on spotting code spans the way GitHub does; they read the same.
-    GitHub URLs outside code go into code spans, which GitHub never links.
+    Mentions, issue refs and the dot in github.com get full-width look-alikes
+    (`＠`, `＃`, `．`) everywhere, code included, so nothing depends on spotting
+    code spans the way GitHub does. They read the same.
     """
     text = MENTION_RE.sub(lambda m: "＠" + m.group(1), text)
     text = ISSUE_REF_RE.sub(lambda m: f"{m.group(1)}＃{m.group(2)}", text)
-    parts = CODE_RE.split(text)
-    for i in range(0, len(parts), 2):
-        parts[i] = GITHUB_URL_RE.sub(lambda m: f"`{m.group(0)}`", parts[i])
-    return "".join(parts)
+    return GITHUB_HOST_RE.sub(r"\1．\2", text)
 
 
 def mirror_comment(c: Comment) -> str:

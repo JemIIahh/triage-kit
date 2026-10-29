@@ -82,10 +82,9 @@ def test_mirror_makes_mentions_and_references_inert():
     for body in bodies:
         assert not re.search(r"@\w", body), body
         assert not re.search(r"#\d", body), body
-        prose = re.sub(r"`[^`]*`", "", body)
-        assert not re.search(r"github\.com/", prose, re.IGNORECASE), body
+        assert not re.search(r"github\.com", body, re.IGNORECASE), body
     last = bodies[-1]
-    assert "`https://github.com/contributor-2/repo/pull/9`" in last
-    assert "`WWW.GitHub.com/o/r/issues/3`" in last
+    assert "https://github．com/contributor-2/repo/pull/9" in last
+    assert "WWW.GitHub．com/o/r/issues/3" in last
     assert "＃5" in last and "other/repo＃7" in last
     assert "＠maintainer" in last and "`＠contributor-1`" in last
